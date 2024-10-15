@@ -21,15 +21,28 @@ def main():
     server_ip = input("Enter server IP: ")
     server_port = int(input("Enter server port: "))
 
+    chatroom_password = input("Enter chatroom password: ")
     username = input("Enter your username: ")
-    password = input("Enter chatroom password: ")
 
     client_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 
     # Mengirimkan password untuk otentikasi
-    client_socket.sendto(f"AUTH PASSWORD {password}".encode('utf-8'), (server_ip, server_port))
-    # Mengirimkan username
+    client_socket.sendto(f"AUTH PASSWORD {chatroom_password}".encode('utf-8'), (server_ip, server_port))
+    # Mengirimkan username untuk pengecekan
     client_socket.sendto(f"AUTH USERNAME {username}".encode('utf-8'), (server_ip, server_port))
+
+    # Menunggu konfirmasi dari server terkait username dan password
+    while True:
+        data, _ = client_socket.recvfrom(1024)
+        response = data.decode('utf-8')
+        if response == "USERNAME_OK":
+            break
+        elif response == "USERNAME_TAKEN":
+            username = input("Username already taken in this chatroom. Enter a different username: ")
+            client_socket.sendto(f"AUTH USERNAME {username}".encode('utf-8'), (server_ip, server_port))
+        elif response == "AUTH_FAILED":
+            print("Incorrect chatroom password.")
+            sys.exit()
 
     threading.Thread(target=receive_messages, args=(client_socket,), daemon=True).start()
 
