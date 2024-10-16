@@ -15,7 +15,7 @@ def run_server():
     chatrooms = {}              # {chatroom_password: set(username)}
 
     server_ip = '0.0.0.0'
-    server_port = 12345         # Port default
+    server_port = get_server_port()         # Port default
 
     # Membuat socket UDP
     server_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -112,6 +112,18 @@ def notify_clients(clients, sender_addr, message, server_socket, client_keys, ad
         if client_addr != sender_addr and addr_chatroom_map.get(client_addr) == chatroom_password:
             encrypted_message = encrypt(client_keys[client_addr], message)
             server_socket.sendto(str(encrypted_message).encode('utf-8'), client_addr)
+
+def get_server_port():
+    while True:
+        try:
+            port = int(input("Masukkan port server (1-65535): ").strip())
+            if 1 <= port <= 65535:
+                return port
+            else:
+                print("Port harus berada dalam rentang 1-65535.")
+        except ValueError:
+            print("Input tidak valid. Silakan masukkan angka.")
+
 
 if __name__ == "__main__":
     run_server()
