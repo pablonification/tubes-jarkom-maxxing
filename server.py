@@ -1,121 +1,69 @@
 import socket
-import threading
+import sys
+
+# Mengimpor fungsi-fungsi RSA dari rsa.py
 from rsa import generate_keypair, encrypt, decrypt
 
-client_keys = {}  # {addr: public_key}
-clients = []  # List of tuples (addr, username)
-addr_chatroom_map = {}  # {addr: chatroom_password}
-chatrooms = {}  # {chatroom_password: set(username)}
+# ===============================
+# Fungsi Server
+# ===============================
 
-def handle_client(addr, server_socket):
-    global public_key, private_key
+def run_server():
+    client_keys = {}            # {addr: public_key}
+    clients = []                # List of tuples (addr, username)
+    addr_chatroom_map = {}      # {addr: chatroom_password}
+    chatrooms = {}              # {chatroom_password: set(username)}
+
+    server_ip = '0.0.0.0'
+    server_port = 12345         # Port default
+
+    # Membuat socket UDP
+    server_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    server_socket.bind((server_ip, server_port))
+
+    print("Menghasilkan kunci RSA server...")
+    public_key, private_key = generate_keypair()
+
+    print(f"Server berjalan di {server_ip}:{server_port}")
+    print("Menunggu klien untuk terhubung...")
+
     try:
-        data, _ = server_socket.recvfrom(65536)
-        if data == b"REQUEST_PUBLIC_KEY":
-            # Kirim kunci publik server ke klien
-            server_socket.sendto(str(public_key[0]).encode('utf-8'), addr)
-            server_socket.sendto(str(public_key[1]).encode('utf-8'), addr)
-        else:
-            # Menerima kunci publik klien
-            client_public_key_e = int(data.decode('utf-8'))
-            data, _ = server_socket.recvfrom(65536)
-            client_public_key_n = int(data.decode('utf-8'))
-            client_public_key = (client_public_key_e, client_public_key_n)
-            client_keys[addr] = client_public_key
-            print(f"[DEBUG] Received public key from {addr}: {client_public_key}")
+        while True:
+            data, addr = server_socket.recvfrom(65536)
+            handle_packet(data, addr, server_socket, public_key, private_key, client_keys, clients, addr_chatroom_map, chatrooms)
+    except KeyboardInterrupt:
+        print("\nServer dimatikan.")
     except Exception as e:
-        print(f"Error receiving public key from {addr}: {e}")
-        return
+        print(f"Error dalam loop utama: {e}")
+    finally:
+        server_socket.close()
 
-    while True:
-        try:
-            data, _ = server_socket.recvfrom(65536)
-            if not data:
-                break
-            # Data yang diterima adalah ciphertext terenkripsi
-            ciphertext = eval(data.decode('utf-8'))
-            message = decrypt(private_key, ciphertext)
-            print(f"[DEBUG] Decrypted Message from {addr}: {message}")
-            tag, actual_message = message.split(' ', 1)
-
-            if tag == "AUTH":
-                key, value = actual_message.split(' ', 1)
-                if key == "PASSWORD":
-                    chatroom_password = value
-                    if chatroom_password not in chatrooms:
-                        chatrooms[chatroom_password] = set()
-                    addr_chatroom_map[addr] = chatroom_password
-                elif key == "USERNAME":
-                    chatroom_password = addr_chatroom_map[addr]
-                    if value in chatrooms[chatroom_password]:
-                        response = "USERNAME_TAKEN"
-                        encrypted_response = encrypt(client_keys[addr], response)
-                        print(f"[DEBUG] Encrypted USERNAME_TAKEN to {addr}: {encrypted_response}")
-                        server_socket.sendto(str(encrypted_response).encode('utf-8'), addr)
-                    else:
-                        chatrooms[chatroom_password].add(value)
-                        response = "USERNAME_OK"
-                        encrypted_response = encrypt(client_keys[addr], response)
-                        print(f"[DEBUG] Encrypted USERNAME_OK to {addr}: {encrypted_response}")
-                        server_socket.sendto(str(encrypted_response).encode('utf-8'), addr)
-                        clients.append((addr, value))
-                        print(f"User {value} has joined the chatroom.")
-
-                        # Notifikasi ke klien lain
-                        notification = f"NOTIFY {value} telah bergabung ke chatroom."
-                        for client_addr, _ in clients:
-                            if client_addr != addr and addr_chatroom_map[client_addr] == chatroom_password:
-                                encrypted_notification = encrypt(client_keys[client_addr], notification)
-                                print(f"[DEBUG] Encrypted NOTIFY to {client_addr}: {encrypted_notification}")
-                                server_socket.sendto(str(encrypted_notification).encode('utf-8'), client_addr)
-                else:
-                    response = "AUTH_FAILED"
-                    encrypted_response = encrypt(client_keys[addr], response)
-                    print(f"[DEBUG] Encrypted AUTH_FAILED to {addr}: {encrypted_response}")
-                    server_socket.sendto(str(encrypted_response).encode('utf-8'), addr)
-            elif tag == "CHAT":
-                print(f"[DEBUG] Forwarding message: {message}")
-                chatroom_password = addr_chatroom_map[addr]
-
-                for client_addr, _ in clients:
-                    if client_addr != addr and addr_chatroom_map[client_addr] == chatroom_password:
-                        encrypted_message = encrypt(client_keys[client_addr], message)
-                        print(f"[DEBUG] Encrypted CHAT to {client_addr}: {encrypted_message}")
-                        server_socket.sendto(str(encrypted_message).encode('utf-8'), client_addr)
-            else:
-                print(f"[DEBUG] Unknown tag from {addr}: {tag}")
-        except Exception as e:
-            print(f"Error handling message from {addr}: {e}")
-            break
-
-def handle_packet(data, addr, server_socket):
-    global public_key, private_key
+def handle_packet(data, addr, server_socket, public_key, private_key, client_keys, clients, addr_chatroom_map, chatrooms):
     try:
         if data == b"REQUEST_PUBLIC_KEY":
-            # Kirim kunci publik server ke klien
+            # Mengirim kunci publik server ke klien
             server_socket.sendto(str(public_key[0]).encode('utf-8'), addr)
             server_socket.sendto(str(public_key[1]).encode('utf-8'), addr)
+        elif data == b"VALIDATE_IP":
+            # Mengirim respon bahwa IP valid
+            server_socket.sendto(b"IP_VALID", addr)
         elif addr not in client_keys:
             # Menerima kunci publik klien
             client_public_key_e = int(data.decode('utf-8'))
-            data, addr = server_socket.recvfrom(65536)
+            data, _ = server_socket.recvfrom(65536)
             client_public_key_n = int(data.decode('utf-8'))
-            client_public_key = (client_public_key_e, client_public_key_n)
-            client_keys[addr] = client_public_key
-            print(f"[DEBUG] Received public key from {addr}: {client_public_key}")
+            client_keys[addr] = (client_public_key_e, client_public_key_n)
+            print(f"[DEBUG] Menerima kunci publik dari {addr}: {client_keys[addr]}")
         else:
-            # Data pesan terenkripsi
+            # Menerima pesan terenkripsi dari klien
             ciphertext = eval(data.decode('utf-8'))
             message = decrypt(private_key, ciphertext)
-            print(f"[DEBUG] Decrypted Message from {addr}: {message}")
-            # Proses pesan seperti sebelumnya
-            process_message(addr, message, server_socket)
+            print(f"[DEBUG] Pesan didekripsi dari {addr}: {message}")
+            process_message(addr, message, server_socket, client_keys, clients, addr_chatroom_map, chatrooms)
     except Exception as e:
-        print(f"Error handling packet from {addr}: {e}")
+        print(f"Error menangani paket dari {addr}: {e}")
 
-
-def process_message(addr, message, server_socket):
-    global client_keys, clients, addr_chatroom_map, chatrooms
+def process_message(addr, message, server_socket, client_keys, clients, addr_chatroom_map, chatrooms):
     try:
         tag, actual_message = message.split(' ', 1)
 
@@ -129,79 +77,41 @@ def process_message(addr, message, server_socket):
             elif key == "USERNAME":
                 chatroom_password = addr_chatroom_map.get(addr)
                 if chatroom_password is None:
-                    response = "AUTH_FAILED"
-                    encrypted_response = encrypt(client_keys[addr], response)
-                    server_socket.sendto(str(encrypted_response).encode('utf-8'), addr)
+                    send_response(server_socket, client_keys[addr], addr, "AUTH_FAILED")
                     return
                 if value in chatrooms[chatroom_password]:
-                    response = "USERNAME_TAKEN"
-                    encrypted_response = encrypt(client_keys[addr], response)
-                    print(f"[DEBUG] Encrypted USERNAME_TAKEN to {addr}: {encrypted_response}")
-                    server_socket.sendto(str(encrypted_response).encode('utf-8'), addr)
+                    send_response(server_socket, client_keys[addr], addr, "USERNAME_TAKEN")
                 else:
                     chatrooms[chatroom_password].add(value)
-                    response = "USERNAME_OK"
-                    encrypted_response = encrypt(client_keys[addr], response)
-                    print(f"[DEBUG] Encrypted USERNAME_OK to {addr}: {encrypted_response}")
-                    server_socket.sendto(str(encrypted_response).encode('utf-8'), addr)
                     clients.append((addr, value))
-                    print(f"User {value} has joined the chatroom.")
+                    send_response(server_socket, client_keys[addr], addr, "USERNAME_OK")
+                    print(f"User {value} telah bergabung ke chatroom.")
 
-                    # Notifikasi ke klien lain
-                    notification = f"NOTIFY {value} telah bergabung ke chatroom."
-                    for client_addr, _ in clients:
-                        if client_addr != addr and addr_chatroom_map.get(client_addr) == chatroom_password:
-                            encrypted_notification = encrypt(client_keys[client_addr], notification)
-                            print(f"[DEBUG] Encrypted NOTIFY to {client_addr}: {encrypted_notification}")
-                            server_socket.sendto(str(encrypted_notification).encode('utf-8'), client_addr)
+                    # Notifikasi ke klien lain di chatroom yang sama
+                    notify_clients(clients, addr, f"NOTIFY {value} telah bergabung ke chatroom.", server_socket, client_keys, addr_chatroom_map, chatroom_password)
             else:
-                response = "AUTH_FAILED"
-                encrypted_response = encrypt(client_keys[addr], response)
-                print(f"[DEBUG] Encrypted AUTH_FAILED to {addr}: {encrypted_response}")
-                server_socket.sendto(str(encrypted_response).encode('utf-8'), addr)
+                send_response(server_socket, client_keys[addr], addr, "AUTH_FAILED")
         elif tag == "CHAT":
-            print(f"[DEBUG] Forwarding message: {message}")
             chatroom_password = addr_chatroom_map.get(addr)
-            if chatroom_password is None:
-                return
-            for client_addr, _ in clients:
-                if client_addr != addr and addr_chatroom_map.get(client_addr) == chatroom_password:
-                    encrypted_message = encrypt(client_keys[client_addr], message)
-                    print(f"[DEBUG] Encrypted CHAT to {client_addr}: {encrypted_message}")
-                    server_socket.sendto(str(encrypted_message).encode('utf-8'), client_addr)
+            if chatroom_password:
+                # Meneruskan pesan ke klien lain di chatroom yang sama
+                notify_clients(clients, addr, message, server_socket, client_keys, addr_chatroom_map, chatroom_password)
         else:
-            print(f"[DEBUG] Unknown tag from {addr}: {tag}")
+            print(f"[DEBUG] Tag tidak dikenal dari {addr}: {tag}")
     except Exception as e:
-        print(f"Error processing message from {addr}: {e}")
+        print(f"Error memproses pesan dari {addr}: {e}")
 
+def send_response(server_socket, client_public_key, addr, response):
+    """Mengenkripsi dan mengirim respons ke klien."""
+    encrypted_response = encrypt(client_public_key, response)
+    server_socket.sendto(str(encrypted_response).encode('utf-8'), addr)
 
-def main():
-    global public_key, private_key
-
-    server_ip = '0.0.0.0'
-    server_port = 12345
-
-    server_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    server_socket.bind((server_ip, server_port))
-
-    # Menghasilkan kunci RSA server
-    print("Menghasilkan kunci RSA server...")
-    public_key, private_key = generate_keypair()
-
-    print(f"Server running on {server_ip}:{server_port}")
-
-    while True:
-        try:
-            data, addr = server_socket.recvfrom(65536)
-            handle_packet(data, addr, server_socket)
-        except KeyboardInterrupt:
-            print("\nServer shutting down.")
-            break
-        except Exception as e:
-            print(f"Error in main loop: {e}")
-
-    server_socket.close()
-
+def notify_clients(clients, sender_addr, message, server_socket, client_keys, addr_chatroom_map, chatroom_password):
+    """Mengirim notifikasi ke klien lain di chatroom yang sama."""
+    for client_addr, _ in clients:
+        if client_addr != sender_addr and addr_chatroom_map.get(client_addr) == chatroom_password:
+            encrypted_message = encrypt(client_keys[client_addr], message)
+            server_socket.sendto(str(encrypted_message).encode('utf-8'), client_addr)
 
 if __name__ == "__main__":
-    main()
+    run_server()
