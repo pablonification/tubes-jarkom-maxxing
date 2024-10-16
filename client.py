@@ -1,26 +1,24 @@
 import socket
 import threading
 import sys
-from double_ratchet import DoubleRatchet
+from rsa import generate_keypair, encrypt, decrypt
 
-def receive_messages(client_socket, ratchet, stop_event):
+def receive_messages(client_socket, private_key, stop_event):
     while not stop_event.is_set():
         try:
-            data, _ = client_socket.recvfrom(4096)
+            data, _ = client_socket.recvfrom(65536)
             if not data:
                 break
-            # Semua pesan dienkripsi
-            message = ratchet.decrypt(data).decode('utf-8')
+            ciphertext = eval(data.decode('utf-8'))
+            message = decrypt(private_key, ciphertext)
             tag, actual_message = message.split(' ', 1)
 
             if tag == "CHAT" or tag == "NOTIFY":
-                # Hapus input yang sedang diketik oleh pengguna
                 print('\r' + ' ' * 80 + '\r', end='', flush=True)
                 print(f"{actual_message}")
-                # Tampilkan kembali prompt tanpa mengganggu input
                 print("You: ", end='', flush=True)
             else:
-                # Menangani pesan lain (misalnya, USERNAME_TAKEN)
+                # Menangani pesan lain
                 if message == "USERNAME_TAKEN":
                     print("\nUsername sudah digunakan.")
                     while True:
@@ -29,23 +27,22 @@ def receive_messages(client_socket, ratchet, stop_event):
                             print("Username tidak boleh kosong.")
                         else:
                             # Kirim username baru ke server
-                            client_socket.sendto(
-                                ratchet.encrypt(f"AUTH USERNAME {new_username}".encode('utf-8')),
-                                (server_ip, server_port)
-                            )
+                            encrypted_message = encrypt(server_public_key, f"AUTH USERNAME {new_username}")
+                            client_socket.sendto(str(encrypted_message).encode('utf-8'), (server_ip, server_port))
                             break
                 elif message == "AUTH_FAILED":
                     print("\nPassword salah. Silakan restart klien.")
                     stop_event.set()
                     break
-        except socket.error:
-            # Socket telah ditutup
-            break
+                elif message == "USERNAME_OK":
+                    print("Username diterima. Ketik '/exit' untuk keluar dari chat.")
+                else:
+                    print(f"\nUnknown message: {message}")
         except Exception as e:
             print(f"\nError receiving message: {e}")
             break
 
-def send_messages(client_socket, ratchet, server_ip, server_port, username, stop_event):
+def send_messages(client_socket, server_public_key, username, stop_event):
     while not stop_event.is_set():
         try:
             message = input("You: ")
@@ -57,33 +54,43 @@ def send_messages(client_socket, ratchet, server_ip, server_port, username, stop
                 stop_event.set()
                 break
             full_message = f"CHAT {username}: {message}"
-            encrypted_message = ratchet.encrypt(full_message.encode('utf-8'))
-            client_socket.sendto(encrypted_message, (server_ip, server_port))
-        except KeyboardInterrupt:
-            print("\nExiting...")
-            stop_event.set()
-            break
+            encrypted_message = encrypt(server_public_key, full_message)
+            client_socket.sendto(str(encrypted_message).encode('utf-8'), (server_ip, server_port))
         except Exception as e:
             print(f"Error sending message: {e}")
             stop_event.set()
             break
 
 def main():
-    global server_ip, server_port  # Ditambahkan agar dapat digunakan di fungsi lain
+    global server_ip, server_port, server_public_key
     server_ip = input("Enter server IP: ")
     server_port = int(input("Enter server port: "))
 
     client_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    initial_key = b"this_is_an_initial_key__32bytes!"
-    ratchet = DoubleRatchet(initial_key)
+
+    # Menghasilkan kunci RSA klien
+    print("Menghasilkan kunci RSA klien...")
+    public_key, private_key = generate_keypair()
+
+    # Menerima kunci publik server
+    print("Menerima kunci publik server...")
+    client_socket.sendto(b"REQUEST_PUBLIC_KEY", (server_ip, server_port))
+    server_public_key_e, _ = client_socket.recvfrom(65536)
+    server_public_key_n, _ = client_socket.recvfrom(65536)
+    server_public_key_e = int(server_public_key_e.decode('utf-8'))
+    server_public_key_n = int(server_public_key_n.decode('utf-8'))
+    server_public_key = (server_public_key_e, server_public_key_n)
+
+
+    # Mengirim kunci publik klien ke server
+    client_socket.sendto(str(public_key[0]).encode('utf-8'), (server_ip, server_port))
+    client_socket.sendto(str(public_key[1]).encode('utf-8'), (server_ip, server_port))
 
     chatroom_password = input("Enter chatroom password: ")
 
     # Kirim password terenkripsi
-    client_socket.sendto(
-        ratchet.encrypt(f"AUTH PASSWORD {chatroom_password}".encode('utf-8')),
-        (server_ip, server_port)
-    )
+    encrypted_message = encrypt(server_public_key, f"AUTH PASSWORD {chatroom_password}")
+    client_socket.sendto(str(encrypted_message).encode('utf-8'), (server_ip, server_port))
 
     while True:
         username = input("Enter your username: ")
@@ -91,13 +98,12 @@ def main():
             print("Username tidak boleh kosong.")
             continue
         # Kirim username terenkripsi
-        client_socket.sendto(
-            ratchet.encrypt(f"AUTH USERNAME {username}".encode('utf-8')),
-            (server_ip, server_port)
-        )
+        encrypted_message = encrypt(server_public_key, f"AUTH USERNAME {username}")
+        client_socket.sendto(str(encrypted_message).encode('utf-8'), (server_ip, server_port))
 
-        data, _ = client_socket.recvfrom(4096)
-        response = ratchet.decrypt(data).decode('utf-8')
+        data, _ = client_socket.recvfrom(65536)
+        ciphertext = eval(data.decode('utf-8'))
+        response = decrypt(private_key, ciphertext)
 
         if response == "USERNAME_OK":
             print("Username diterima. Ketik '/exit' untuk keluar dari chat.")
@@ -116,12 +122,12 @@ def main():
 
     # Mulai thread untuk menerima pesan
     recv_thread = threading.Thread(
-        target=receive_messages, args=(client_socket, ratchet, stop_event), daemon=True
+        target=receive_messages, args=(client_socket, private_key, stop_event), daemon=True
     )
     recv_thread.start()
 
     # Kirim pesan
-    send_messages(client_socket, ratchet, server_ip, server_port, username, stop_event)
+    send_messages(client_socket, server_public_key, username, stop_event)
 
     # Tunggu thread penerima pesan selesai
     recv_thread.join()
