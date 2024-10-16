@@ -51,7 +51,7 @@ A **simple chat room application** that allows multiple users to communicate in 
    On another machine or mobile device (using Termux), run:
 
    ```bash
-   python client_test.py
+   python client.py
    ```
 
 4. **Enter Server Details**:
@@ -83,8 +83,8 @@ A **simple chat room application** that allows multiple users to communicate in 
 
 ```
 ├── server.py             # Server-side code to handle multiple clients
-├── client_test.py        # Client-side code (includes RSA encryption for testing)
-├── rsa.py                # RSA encryption implementation (integrated into client_test.py)
+├── client.py        # Client-side code (includes RSA encryption for testing)
+├── rsa.py                # RSA encryption implementation (integrated into client.py)
 ├── README.md             # Documentation for the project
 ```
 
@@ -150,7 +150,8 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 ## Contributors
 
-- **[Your Name]** - Developer
+- **Arqila** - Developer
+- **Daniel** - Developer
 
 ---
 
