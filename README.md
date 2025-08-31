@@ -1,5 +1,6 @@
 
-# UDP Encrypted Chat Room
+
+# Tugas Besar 1 Jaringan Komputer II2120: UDP Encrypted Chat Room
 
 A **simple chat room application** that allows multiple users to communicate in real-time using **UDP sockets**. The communication is secured using **RSA encryption**, ensuring that all messages exchanged are encrypted and decrypted properly. This project demonstrates socket programming with **Python** and implements key features like authentication, unique usernames, and encrypted messaging.
 
